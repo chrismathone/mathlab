@@ -20,6 +20,8 @@ import {
   notFound,
 } from '@/lib/api';
 import { getExamScope } from '@/lib/demo/accounts';
+import { tallyQuestions } from '@/lib/exam-analysis/shared/summary-tally';
+import type { AnalyzedQuestion } from '@/lib/exam-analysis/types';
 
 type Params = { params: Promise<{ id: string; questionNumber: string }> };
 
@@ -83,7 +85,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const latest = await prisma.examAnalysis.findFirst({
       where: { examPaperId: id },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, questions: true },
+      select: { id: true, questions: true, summary: true },
     });
     if (!latest) return notFound('분석 결과가 없습니다');
 
@@ -131,9 +133,33 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const updatedQuestions = [...questionsArr];
     updatedQuestions[idx] = next;
 
+    // summary 는 questions 에서 파생되는 값이다(엔진과 같은 tallyQuestions). 교정 뒤 맞춰 두지 않으면
+    // 저장된 분포를 읽는 곳 — 유형 차트 · 블로그 차트 PNG · AI 총평 프롬프트 · 주변학교 비교 — 가
+    // 교정 전 값을 계속 쓴다(2026-09-17: 유형 2문항 교정 후에도 '변화와 관계 22문항 100%').
+    // summary 가 없거나 객체가 아니면(구형·손상) 새로 지어내지 않고 그대로 둔다.
+    const summaryRaw = latest.summary;
+    let nextSummary: Record<string, unknown> | null = null;
+    if (summaryRaw && typeof summaryRaw === 'object' && !Array.isArray(summaryRaw)) {
+      // tallyQuestions 는 difficulty · question_type · 형식 필드를 방어적으로만 읽는다 — 객체가 아닌 항목만 거른다.
+      const tallySource = updatedQuestions.filter(
+        (q): q is Record<string, unknown> => !!q && typeof q === 'object',
+      ) as unknown as AnalyzedQuestion[];
+      const dist = tallyQuestions(tallySource, examPaper.subject);
+      nextSummary = {
+        ...(summaryRaw as Record<string, unknown>),
+        difficulty_distribution: dist.difficulty,
+        type_distribution: dist.type,
+        average_difficulty: dist.dominantDifficulty,
+        dominant_type: dist.dominantType,
+      };
+    }
+
     await prisma.examAnalysis.update({
       where: { id: latest.id },
-      data: { questions: updatedQuestions as never },
+      data: {
+        questions: updatedQuestions as never,
+        ...(nextSummary ? { summary: nextSummary as never } : {}),
+      },
     });
 
     // ── 교정 이벤트 로그 (append-only, best-effort) — 실패해도 교정 저장 자체는 성공 처리 ──

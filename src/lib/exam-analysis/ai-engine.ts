@@ -10,7 +10,6 @@ import { CONFIDENCE_THRESHOLDS } from './constants';
 import type { ExamSubjectKey } from './constants';
 import {
   defaultQuestionType,
-  emptyTypeDistribution,
   normalizeAbilityDomain,
   normalizeQuestionType,
   toExamSubjectKey,
@@ -20,7 +19,8 @@ import { roundPoints, sumPoints } from './shared/points';
 import { callCliVision, isCliExamAnalysisEnabled } from './cli-llm';
 import { isEnglishStudyJunk } from './english-study-pack';
 import { EXAM_ANALYSIS_MODEL } from './shared/exam-model';
-import { isEssay, formatDistribution } from './shared/question-format';
+import { isEssay } from './shared/question-format';
+import { tallyQuestions } from './shared/summary-tally';
 
 // ── 싱글톤 클라이언트 ──
 
@@ -462,42 +462,6 @@ function isBetterPass(next: AnalysisCompleteness, prev: AnalysisCompleteness): b
     Math.abs(c.pointsShortfall) + Math.max(0, (c.declaredQuestions ?? 0) - c.emittedQuestions) * 10;
   if (gap(next) !== gap(prev)) return gap(next) < gap(prev);
   return next.emittedQuestions > prev.emittedQuestions;
-}
-
-/**
- * questions 배열에서 분포를 **파생**한다. summary 는 절대 독립 저장하지 않는다.
- *
- * ⚠️ placeholder 삽입(fillNumberGaps / appendMissingTail)은 분포 계산 뒤에 일어나므로,
- *    삽입 후 반드시 다시 돌려야 한다. 안 그러면 `questions.length` 와
- *    `difficulty_distribution` 합이 어긋난 모순된 분석본이 저장된다.
- *
- * 난이도가 null(판독 실패)인 문항은 어느 단계에도 계상하지 않는다 — 모르는 것을 아는 척하지 않는다.
- * 따라서 분포 합 ≤ questions.length 이며, 그 차이가 곧 '미정' 문항 수다.
- */
-function tallyQuestions(questions: AnalyzedQuestion[], subject: ExamSubjectKey) {
-  const difficulty: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
-  const type: Record<string, number> = emptyTypeDistribution(subject);
-
-  for (const q of questions) {
-    if (q.difficulty != null) {
-      const diff = String(q.difficulty);
-      if (difficulty[diff] !== undefined) difficulty[diff]++;
-    }
-    const qType = q.question_type;
-    if (qType && type[qType] !== undefined) type[qType]++;
-  }
-
-  // 형식 집계는 정규화를 거친다 — 예전엔 AI 가 'Essay' 같은 변형을 주면 세 칸
-  // 어디에도 안 들어가 합계가 문항 수보다 작아졌다.
-  const format = formatDistribution(questions);
-
-  return {
-    difficulty,
-    type,
-    format,
-    dominantDifficulty: Object.entries(difficulty).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '3',
-    dominantType: Object.entries(type).sort((a, b) => b[1] - a[1])[0]?.[0] ?? defaultQuestionType(subject),
-  };
 }
 
 /** placeholder 가 추가된 뒤 exam_info·summary 를 questions 와 다시 맞춘다. */

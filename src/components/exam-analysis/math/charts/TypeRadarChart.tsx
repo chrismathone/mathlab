@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { countAbilities } from '@/lib/exam-analysis/shared/chart-axes';
+import { countAbilities, countTypes } from '@/lib/exam-analysis/shared/chart-axes';
 import {
   RadarChart,
   PolarGrid,
@@ -32,7 +32,10 @@ export function MathTypeRadarChart({ data, questions }: TypeRadarChartProps) {
     [questions],
   );
 
+  // 유형도 능력처럼 문항에서 직접 센다. 저장된 summary 는 분석 당시 값이라 선생님 교정이 안 잡힌다
+  // (표는 '수와 연산' 2문항인데 차트는 '변화와 관계 100%' — 2026-09-17). 문항이 없을 때만 저장 분포로 폴백.
   const standardTypeData = useMemo(() => {
+    if (questions?.length) return countTypes('MATH', questions);
     const counts: Record<string, number> = {};
     for (const [key, value] of Object.entries(data)) {
       if (value <= 0) continue;
@@ -40,7 +43,7 @@ export function MathTypeRadarChart({ data, questions }: TypeRadarChartProps) {
       counts[standard] = (counts[standard] || 0) + value;
     }
     return counts;
-  }, [data]);
+  }, [data, questions]);
 
   const allItems = useMemo(() => {
     if (viewMode === 'ability') {

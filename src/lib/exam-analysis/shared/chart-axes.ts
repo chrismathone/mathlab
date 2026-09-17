@@ -21,7 +21,7 @@ import {
   QUESTION_TYPE_COLORS,
   QUESTION_TYPE_LABELS,
 } from '../constants';
-import { normalizeAbilityDomain, toExamSubjectKey } from './subject';
+import { emptyTypeDistribution, normalizeAbilityDomain, normalizeQuestionType, toExamSubjectKey } from './subject';
 import type { AnalyzedQuestion } from '../types';
 
 const MATH_TYPE_KEYS = ['number', 'change_relation', 'shape_measure', 'data_possibility'] as const;
@@ -92,6 +92,28 @@ export function countAbilities(
     //    이미 갖고 있는데 여기서 우회하고 있었다 (적대적 리뷰 1.7).
     const domain = normalizeAbilityDomain(subject, q.ability_domain, q.question_type);
     if (domain && domain in counts) counts[domain] += 1;
+  }
+  return counts;
+}
+
+/**
+ * 문항별 question_type 집계 — 화면 유형 차트 · 저장 summary(엔진) · 교정 PATCH 가 모두 이 함수로 센다.
+ *
+ * 화면이 저장된 summary.type_distribution 을 그대로 쓰던 시절엔 선생님이 유형을 고쳐도 차트가
+ * 분석 당시 값에 머물렀다 — 표는 '수와 연산' 2문항인데 차트는 '변화와 관계 22문항(100%)' (2026-09-17).
+ * 능력 차트는 이미 countAbilities 로 문항에서 직접 세고 있었다.
+ *
+ * 옛 5분류 키(algebra·geometry 등)는 공용 정규화기로 현행 영역에 흡수한다. 엔진이 raw 키로 세던
+ * 시절엔 이런 문항이 어느 칸에도 안 들어가 조용히 빠졌다.
+ */
+export function countTypes(
+  subject: string | null | undefined,
+  questions: readonly Pick<AnalyzedQuestion, 'question_type'>[],
+): Record<string, number> {
+  const counts = emptyTypeDistribution(subject);
+  for (const q of questions) {
+    const type = normalizeQuestionType(subject, q.question_type);
+    if (type && type in counts) counts[type] += 1;
   }
   return counts;
 }
