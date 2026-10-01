@@ -12,7 +12,7 @@ interface Row {
   error?: string;
 }
 interface Run {
-  metadata: { runId: string; cases: number; suite?: string; model: string; threshold: number; completed: boolean; fixtureHash: string; questionHash: string; inputUsdPerMillion: number };
+  metadata: { runId: string; cases: number; suite?: string; version?: string; model: string; threshold: number; completed: boolean; fixtureHash: string; questionHash: string; inputUsdPerMillion: number };
   repeatChanges: unknown[];
   rules: { unsupportedTotal: number; unsupportedFlagged: number; supportedFlagged: number };
   results: Row[];
@@ -23,6 +23,8 @@ const paths = process.argv.slice(2).map((p) => resolve(p));
 assert(paths.length > 0, 'Provide explicit report.json paths');
 const runs = paths.map((p) => JSON.parse(readFileSync(p, 'utf8')) as Run);
 assert.equal(new Set(runs.map((r) => r.metadata.runId)).size, runs.length, 'Duplicate run');
+assert.equal(new Set(runs.map((r) => r.metadata.version ?? 'v1')).size, 1, 'Use compare.ts to compare harness versions');
+assert.equal(new Set(runs.map((r) => r.metadata.suite ?? 'synthetic')).size, runs.length, 'Do not double-count reruns of one suite');
 assert(runs.every((r) => r.metadata.completed && Array.isArray(r.results)));
 const casesByRun = paths.map((p) => JSON.parse(readFileSync(join(p, '..', 'inputs.json'), 'utf8')).cases as InputCase[]);
 const rows = runs.flatMap((r) => r.results);
@@ -37,6 +39,7 @@ const failures = runs.flatMap((run, index) => run.results.filter((r) => r.correc
   ...r, runId: run.metadata.runId, case: casesByRun[index].find((c) => c.id === r.id),
 })));
 const summary = {
+  version: runs[0].metadata.version ?? 'v1',
   model: [...new Set(runs.map((r) => r.metadata.model))],
   uniqueCases: runs.reduce((s, r) => s + r.metadata.cases, 0),
   caseSources: { synthetic: casesByRun.flat().filter((c) => !c.tags.includes('demo_consistency')).length, demoConsistency: casesByRun.flat().filter((c) => c.tags.includes('demo_consistency')).length },
@@ -67,6 +70,7 @@ const text = [
   'MathLab — Jev 실제 호출 파일럿 결과 (2026-10-02 KST)',
   '',
   `모델: ${summary.model.join(', ')}`,
+  `하네스: ${summary.version}`,
   `사례: ${summary.uniqueCases}개 (합성 ${summary.caseSources.synthetic}, 익명화 공개 데모 일관성 ${summary.caseSources.demoConsistency})`,
   '각 사례를 한국어/영어 지시문으로 각각 2회 반복. 반복 호출은 독립적인 시험 문항 수가 아니다.',
   `판정 일치: ${summary.correct}/${summary.calls}회 (${(summary.correct / summary.calls * 100).toFixed(2)}%), API/응답 검증 오류 ${summary.errors}회`,
@@ -92,15 +96,15 @@ const text = [
   '',
   '해석과 제약:',
   '- 테스트 작성자가 기대값을 부여했다. 교사가 독립 검수한 실제 시험지 정확도가 아니다.',
-  '- 1차 합성 결과를 본 뒤 도전 사례를 추가했다. 지시문/선택 기준과 원래 기대값은 수정하지 않았다.',
+  '- synthetic/challenge는 개발용 자료다. holdout도 v2 평가 후 v3 설계에 사용했다. 원래 기대값은 수정하지 않았다.',
+  '- confirmation은 v3 실행 전에 고정한 근거 판단 전용 32개 사례다. 세트별 비교는 compare.ts 보고서를 참고한다.',
   '- 공개 데모 사례는 저장된 분석과의 일관성을 확인할 뿐, 원본 시험지나 교육학적 해석의 진실성을 증명하지 않는다.',
   '- 명시적 근거가 있는 짧은 사례가 많다. 긴 원문, OCR 오류, 여러 교사 판단 차이는 별도 검증해야 한다.',
   '- 이번 결과는 총평 검토와 분류 제안에 유망하다. 교사 수정값이나 자동 발행 정책에 연결하지 않았다.',
   '- 외부 전송은 합성 데이터와 공개 데모의 숫자·분류 필드로 제한했다. 사용자·학교 식별자와 API 키는 결과에 저장하지 않았다.',
   '',
   '재실행:',
-  'npx tsx scripts/jev/benchmark.ts --live',
-  'npx tsx scripts/jev/benchmark.ts --challenge --live',
+  ...runs.map((run) => `npx tsx scripts/jev/benchmark.ts${run.metadata.suite && run.metadata.suite !== 'synthetic' ? ` --${run.metadata.suite}` : ''}${summary.version !== 'v1' ? ` --${summary.version}` : ''} --live`),
   '',
   '공식 API: https://docs.typesafe.ai/api',
   '공식 가격/모델: https://docs.typesafe.ai/models',
@@ -110,6 +114,6 @@ const text = [
 ].join('\n');
 const output = join(process.cwd(), 'test-results', 'jev');
 mkdirSync(output, { recursive: true });
-writeFileSync(join(output, 'summary.json'), JSON.stringify(summary, null, 2));
-writeFileSync(join(output, 'summary.txt'), text);
+writeFileSync(join(output, `summary-${summary.version}.json`), JSON.stringify(summary, null, 2));
+writeFileSync(join(output, `summary-${summary.version}.txt`), text);
 console.log(text);
