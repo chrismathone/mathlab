@@ -12,6 +12,7 @@ interface EssayAnalysisSectionProps {
   questions: AnalyzedQuestion[];
   totalQuestions: number;
   totalPoints: number;
+  subject?: string;
 }
 
 
@@ -22,7 +23,7 @@ const DIFFICULTY_LABELS: Record<string, string> = {
 
 const DIFFICULTY_ORDER = ['1', '2', '3', '4', '5'] as const;
 
-export function EssayAnalysisSection({ questions, totalQuestions, totalPoints }: EssayAnalysisSectionProps) {
+export function EssayAnalysisSection({ questions, totalQuestions, totalPoints, subject }: EssayAnalysisSectionProps) {
   // 서술형 문항만 필터
   const essayQuestions = useMemo(
     () => questions.filter(isEssay),
@@ -128,7 +129,7 @@ export function EssayAnalysisSection({ questions, totalQuestions, totalPoints }:
         <StatCard
           label="평균 난이도"
           value={stats.avgDiffLabel}
-          sub="5단계 기준"
+          sub={subject === 'ENGLISH' ? 'AI 추정·교사 판단' : '5단계 기준'}
           valueColor={DIFFICULTY_COLORS[stats.avgDiffKey]}
         />
         <StatCard
@@ -189,8 +190,9 @@ export function EssayAnalysisSection({ questions, totalQuestions, totalPoints }:
       {/* 하단 안내 메시지 */}
       <div className="px-5 pb-5 pt-2">
         <p className="text-xs text-amber-800/80 leading-relaxed bg-amber-500/8 rounded-sm px-3.5 py-2.5 border border-amber-300/30">
-          서술형 문항은 배점이 높고 변별력이 큰 문항입니다. 전체 배점의 {stats.ptsPct}%로{' '}
-          {stats.ptsPct >= 30 ? '높은' : stats.ptsPct >= 15 ? '적절한' : '낮은'} 비중을 차지하고 있습니다.
+          {subject === 'ENGLISH'
+            ? `서술형 배점은 전체의 ${stats.ptsPct}%입니다. 실제 변별력은 학생 응답으로 확인해야 하며, 부분점수·감점은 문항별 채점 기준을 따릅니다.`
+            : <>서술형 문항은 배점이 높고 변별력이 큰 문항입니다. 전체 배점의 {stats.ptsPct}%로 {stats.ptsPct >= 30 ? '높은' : stats.ptsPct >= 15 ? '적절한' : '낮은'} 비중을 차지하고 있습니다.</>}
         </p>
       </div>
     </div>

@@ -37,6 +37,9 @@ import { weightedAverageDifficulty } from '@/lib/exam-analysis/shared/difficulty
 import { EnglishLevelStrategies } from './EnglishLevelStrategies';
 import { buildEnglishTopicStrategies, matchedStrategyCount } from '@/lib/exam-analysis/shared/english-topic-strategy';
 import { EnglishTopicStrategies } from './EnglishTopicStrategies';
+import { formatPoints, sumPoints } from '@/lib/exam-analysis/shared/points';
+import { readEnglishQuestionAnalysis, SUBTYPE_LABELS } from '@/lib/exam-analysis/english/question-evidence';
+import { renderInlineMath } from '@/lib/exam-analysis/rendering';
 
 interface EnglishStudyStrategyTabProps {
   questions: AnalyzedQuestion[];
@@ -80,6 +83,10 @@ export function EnglishStudyStrategyTab({
   storedIncomplete = false,
 }: EnglishStudyStrategyTabProps) {
   const fromQuestions = useMemo(() => buildEnglishStudyFromQuestions(questions), [questions]);
+  const practiceTasks = useMemo(() => questions.flatMap(q => {
+    const a = readEnglishQuestionAnalysis(q.english_analysis);
+    return a.next_practice ? [{ number: q.question_number, task: a.next_practice, subtype: a.subtype }] : [];
+  }), [questions]);
 
   // ── 이 시험에서 특히 볼 문항 ──
   // 이 탭은 여태 단어·구문 목록뿐이었다. 무엇을 외울지는 알려 주는데 **어느 문항이 왜 어려웠는지**
@@ -253,7 +260,11 @@ export function EnglishStudyStrategyTab({
       icon={<Brain className="w-3.5 h-3.5 text-teal-600" />}
       iconBg="bg-teal-500/15"
     >
-      <AbilityBreakdownView breakdown={abilityBreakdown} />
+      <p className="mb-2 text-xs text-slate-500">
+        전체 {questions.length}문항 중 능력이 분류된 {abilityBreakdown.totalQuestions}문항의 확인 배점 {formatPoints(abilityBreakdown.totalPoints)}점 기준입니다.
+        {questions.some(q => q.points == null) && ' 배점 미확인 문항은 비율에 포함되지 않습니다.'}
+      </p>
+      <AbilityBreakdownView breakdown={abilityBreakdown} partial={abilityBreakdown.totalQuestions !== questions.length || questions.some(q => q.points == null)} />
     </Board>
   ) : null;
 
@@ -275,6 +286,10 @@ export function EnglishStudyStrategyTab({
       icon={<Lightbulb className="w-3.5 h-3.5 text-indigo-600" />}
       iconBg="bg-indigo-500/15"
     >
+      <p className="mb-2 text-xs text-slate-500">
+        전체 {questions.length}문항 중 단원이 분류된 {topicGroups.reduce((sum, g) => sum + g.questionCount, 0)}문항의 확인 배점 {formatPoints(sumPoints(topicGroups.map(g => g.points)))}점 기준입니다.
+        {questions.some(q => q.points == null) && ' 배점 미확인 문항은 비율에 포함되지 않습니다.'}
+      </p>
       <EnglishTopicStrategies groups={topicGroups} />
     </Board>
   ) : null;
@@ -284,6 +299,12 @@ export function EnglishStudyStrategyTab({
     <>
       {focusBoard}
       {abilityBoard}
+      {practiceTasks.length > 0 && <Board title="문항별 다음 학습" hint={`${practiceTasks.length}문항`} icon={<Lightbulb className="w-3.5 h-3.5 text-indigo-600" />} iconBg="bg-indigo-500/15">
+        <p className="text-xs text-slate-500 mb-2">이번 시험의 문항 기술을 연습하는 과제입니다. 학생 개인의 오답 진단과는 구분됩니다.</p>
+        <ul className="space-y-2 text-xs text-slate-700">{practiceTasks.map(p => <li key={String(p.number)}>
+          <span className="font-semibold">{p.number}번{p.subtype ? ` · ${SUBTYPE_LABELS[p.subtype]}` : ''}</span> — {renderInlineMath(p.task, `practice-${p.number}`)}
+        </li>)}</ul>
+      </Board>}
       {topicBoard}
       {levelBoard}
     </>

@@ -18,7 +18,8 @@ const DifficultyDonutChart = dynamic(() => import('../charts/DifficultyDonutChar
 
 // 추가 분석 섹션
 import { EssayAnalysisSection } from '../EssayAnalysisSection';
-import { DiscriminationSection } from '../DiscriminationSection';
+import { EnglishEvidencePanel } from './EnglishEvidencePanel';
+import { readCompleteness } from '@/lib/exam-analysis/readiness';
 import { InfoTooltip } from '../InfoTooltip';
 import { QuestionFeedbackButton } from '../QuestionFeedbackButton';
 import { groupByFormat } from '@/lib/exam-analysis/shared/question-format';
@@ -45,17 +46,18 @@ const ENGLISH_ABILITY_OPTIONS: { value: string; label: string }[] = [
   { value: 'reasoning', label: '추론력' }, { value: 'expression', label: '표현력' },
 ];
 
-/** 배점 신뢰도 판정: 합계가 기준의 ±15% 이내인지 */
+/** 만점·문항별 배점을 모두 확인하고 합계를 대조한다. */
 function checkPointsReliable(qs: AnalyzedQuestion[], expectedTotal: number | null) {
-  const total = (expectedTotal && expectedTotal > 0) ? roundPoints(expectedTotal) : 100;
-  const nullCount = qs.filter((q) => q.points === null || q.points === 0).length;
+  const total = (expectedTotal && expectedTotal > 0) ? roundPoints(expectedTotal) : 0;
+  const nullCount = qs.filter((q) => q.points == null).length;
   const pointsSum = sumPoints(qs.map((q) => q.points)); // 부동소수점 오차 제거
   const deviationPct = total > 0 ? Math.round(Math.abs(pointsSum - total) / total * 100) : 0;
 
-  if (nullCount > qs.length * 0.5) {
+  if (!total) return { reliable: false, pointsSum, total, deviationPct, reason: '시험지 만점을 확인하지 못했습니다' };
+  if (nullCount > 0) {
     return { reliable: false, pointsSum, total, deviationPct, reason: `${nullCount}개 문항의 배점을 인식하지 못했습니다` };
   }
-  if (deviationPct > 15) {
+  if (roundPoints(pointsSum - total) !== 0) {
     return { reliable: false, pointsSum, total, deviationPct, reason: `배점 합계 ${formatPoints(pointsSum)}점 (기준 ${total}점, ${deviationPct}% 차이)` };
   }
   return { reliable: true, pointsSum, total, deviationPct, reason: '' };
@@ -73,7 +75,8 @@ function getPointsSuggestion(qs: AnalyzedQuestion[], expectedTotal: number | nul
   newPoints: number;
   reason: string;
 } | null {
-  const total = (expectedTotal && expectedTotal > 0) ? roundPoints(expectedTotal) : 100;
+  if (expectedTotal == null || expectedTotal <= 0 || qs.some(q => q.points == null)) return null;
+  const total = roundPoints(expectedTotal);
   const pointsSum = sumPoints(qs.map((q) => q.points)); // 부동소수점 오차 제거
   const diff = roundPoints(pointsSum - total);
   // 표준 만점에서 ±1~10점 벗어난 경우만 보정 제안 (그 이상이면 별도 검토 필요).
@@ -99,7 +102,7 @@ function getPointsSuggestion(qs: AnalyzedQuestion[], expectedTotal: number | nul
 
 // ── 메인 컴포넌트 ──
 
-export function EnglishAnalysisResultView({ questions: questionsProp, summary, totalPoints: _totalPoints, earnedPoints: _earnedPoints, examType, examPaperId, analysisId, onDifficultyEdit, grade }: AnalysisResultViewProps) {
+export function EnglishAnalysisResultView({ questions: questionsProp, summary, totalPoints: _totalPoints, earnedPoints: _earnedPoints, examType, examPaperId, analysisId, onDifficultyEdit, grade, onRefresh }: AnalysisResultViewProps) {
   // 수동 편집 로컬 오버레이 (페이지 리로드 없이 즉시 표시) — 종합 통계도 즉시 갱신
   const [editedTopics, setEditedTopics] = React.useState<Record<string, string>>({});
   const [editedPoints, setEditedPoints] = React.useState<Record<string, number>>({});
@@ -138,17 +141,19 @@ export function EnglishAnalysisResultView({ questions: questionsProp, summary, t
     setEditedAbilities((prev) => ({ ...prev, [String(qNum)]: v }));
   }, []);
   const isStudentExam = examType === 'student';
+  const completeness = readCompleteness(summary);
+  const expectedTotal = completeness ? completeness.declaredPoints : _totalPoints;
 
   // 배점 신뢰도 판정
   const pointsCheck = useMemo(
-    () => checkPointsReliable(questions, _totalPoints),
-    [questions, _totalPoints]
+    () => checkPointsReliable(questions, expectedTotal),
+    [questions, expectedTotal]
   );
 
   // 배점 자동 보정 제안 (101점/99점 같은 small deviation에 대해 가장 낮은 신뢰도 문항 조정)
   const pointsSuggestion = useMemo(
-    () => getPointsSuggestion(questions, _totalPoints),
-    [questions, _totalPoints]
+    () => getPointsSuggestion(questions, expectedTotal),
+    [questions, expectedTotal]
   );
 
   // 자동 보정 적용 핸들러 — 제안된 문항의 배점을 PATCH 후 로컬 state 갱신
@@ -372,14 +377,22 @@ export function EnglishAnalysisResultView({ questions: questionsProp, summary, t
           questions={questions}
           totalQuestions={total}
           totalPoints={sumPoints(questions.map((q) => q.points))}
+          subject="ENGLISH"
         />
       )}
 
       {/* ══ Row 4: 문항별 배점 (배점 신뢰 시만) ══ */}
       {pointsCheck.reliable && <QuestionPointsChart questions={questions} />}
 
-      {/* ══ Row 5: 변별력 분석 (배점 신뢰 시만) ══ */}
-      {pointsCheck.reliable && <DiscriminationSection questions={questions} />}
+      <p className="rounded-sm border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+        난도는 AI 추정 또는 교사 판단입니다. 실제 오답률·변별력을 뜻하지 않습니다.
+        문항별 응답 통계가 있으면 아래 확인·수정에서 응답 집단과 출처를 함께 기록할 수 있습니다.
+      </p>
+      <EnglishEvidencePanel
+        key={`${examPaperId}:${analysisId}`} questions={questions}
+        declaredPoints={readCompleteness(summary)?.declaredPoints ?? null}
+        examPaperId={examPaperId} analysisId={analysisId} onSaved={onRefresh}
+      />
 
       {/* ── Row 4: 문항 테이블 ── */}
       <Card title="문항별 분석">

@@ -8,6 +8,7 @@ import { assertAnalysisGate } from '@/lib/billing/guard';
 import { assertDemoAnalysisLimit } from '@/lib/demo/accounts';
 import { consumeExamAnalysisCredit } from '@/lib/entitlements/service';
 import { analyzeExam } from '@/lib/exam-analysis/ai-engine';
+import { preserveEnglishQuestionReview } from '@/lib/exam-analysis/english/question-evidence';
 import {
   getExamAnalysisModelVersion,
   getExamAnalysisTimeoutLabel,
@@ -194,6 +195,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   // 보존 필드: difficulty/points/topic/question_type/ability_domain (각 ai_<field> 존재 = 교정됨)
   const PRESERVE_FIELDS = ['difficulty', 'points', 'topic', 'question_type', 'ability_domain'] as const;
   const priorEdits: Record<string, Record<string, unknown>> = {};
+  const priorEnglishReviews = new Map<string, unknown>();
   // 총평 템플릿(테마·골격·문체·블록 구성)은 ExamAnalysisExtension(agentType='template')에 산다.
   // 분석본을 지우면 확장도 함께 사라지므로, 교정값과 같은 방식으로 보존했다가 재적용한다.
   // 안 그러면 재분석에 **성공**할 때마다 사용자가 고른 템플릿이 말없이 기본값으로 돌아간다.
@@ -209,6 +211,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (prev && Array.isArray(prev.questions)) {
       for (const raw of prev.questions) {
         const q = raw as Record<string, unknown>;
+        if (examPaper.subject === 'ENGLISH') priorEnglishReviews.set(String(q.question_number), raw);
         if (!q.manually_edited) continue;
         const edits: Record<string, unknown> = {};
         for (const f of PRESERVE_FIELDS) {
@@ -326,6 +329,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     pushAnalysisProgress(id, `문항 ${analysisResult.questions.length}개 수신, 검증 중`, PROGRESS_STAGE.RECEIVED);
 
     let questions = analysisResult.questions as AnalyzedQuestion[];
+    if (examPaper.subject === 'ENGLISH') {
+      questions = questions.map(q => preserveEnglishQuestionReview(priorEnglishReviews.get(String(q.question_number)), q));
+    }
 
     // 재분석 시 선생님 교정 재적용 (전 필드 ground truth 보존 — 새 AI값은 ai_<field> 로 갱신)
     if (Object.keys(priorEdits).length > 0) {

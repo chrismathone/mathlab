@@ -21,6 +21,7 @@ import { isEnglishStudyJunk } from './english-study-pack';
 import { EXAM_ANALYSIS_MODEL } from './shared/exam-model';
 import { isEssay } from './shared/question-format';
 import { tallyQuestions } from './shared/summary-tally';
+import { parseEnglishQuestionAnalysisFromAI } from './english/question-evidence';
 
 // ── 싱글톤 클라이언트 ──
 
@@ -797,6 +798,7 @@ async function runAnalysisPass(
         topic: q.topic ?? null,
         ai_comment: q.ai_comment ?? null,
         ...englishKeys,
+        ...(subject === 'ENGLISH' ? { english_analysis: parseEnglishQuestionAnalysisFromAI(q.english_analysis) } : {}),
         confidence: typeof q.confidence === 'number' ? q.confidence : CONFIDENCE_THRESHOLDS.MEDIUM,
         confidence_reason: q.confidence_reason ?? null,
         // 스키마 밖 값(예: 문자열 "false")을 그대로 두면 하류가 "답안 있음"으로 오판한다 → boolean 만 통과.

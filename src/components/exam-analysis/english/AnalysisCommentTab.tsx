@@ -41,7 +41,7 @@ export function EnglishAnalysisCommentTab({ questions, examPaperId, analysisId, 
             showDiffReason ? 'bg-primary/10 text-primary font-medium' : 'bg-slate-100 text-slate-500'
           }`}
         >
-          난이도 분석 ({questions.length})
+          추정 난도 분석 ({questions.length})
         </button>
       </div>
 

@@ -22,6 +22,8 @@ import {
 import { getExamScope } from '@/lib/demo/accounts';
 import { tallyQuestions } from '@/lib/exam-analysis/shared/summary-tally';
 import type { AnalyzedQuestion } from '@/lib/exam-analysis/types';
+import { englishQuestionAnalysisSchema, validateEnglishSubquestionPoints } from '@/lib/exam-analysis/english/question-evidence-schema';
+import { readEnglishQuestionAnalysis } from '@/lib/exam-analysis/english/question-evidence';
 
 type Params = { params: Promise<{ id: string; questionNumber: string }> };
 
@@ -36,6 +38,8 @@ const patchSchema = z.object({
   // ⚠️ 여기 enum이 드롭다운 옵션보다 좁으면 교정이 400으로 조용히 실패한다 — 반드시 동기화할 것.
   question_type: z.string().max(40).optional(),
   ability_domain: z.string().max(40).optional(),
+  english_analysis: englishQuestionAnalysisSchema.optional(),
+  analysisId: z.string().optional(),
 });
 
 const MATH_TYPES = new Set([
@@ -58,7 +62,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const body = await request.json().catch(() => ({}));
     const parsed = patchSchema.safeParse(body);
-    if (!parsed.success) return badRequest('입력값이 올바르지 않습니다');
+    if (!parsed.success) return badRequest(parsed.error.issues.find(i => i.code === 'custom')?.message || '입력값이 올바르지 않습니다');
 
     const tenantWhere = await getExamScope(user);
     const examPaper = await prisma.examPaper.findFirst({
@@ -68,6 +72,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (!examPaper) return notFound('시험지를 찾을 수 없습니다');
 
     const isEnglish = examPaper.subject === 'ENGLISH';
+    if (parsed.data.english_analysis && !isEnglish) return badRequest('영어 시험지에서만 상세 분석을 저장할 수 있습니다');
     if (parsed.data.question_type) {
       const allowed = isEnglish ? ENGLISH_TYPES : MATH_TYPES;
       if (!allowed.has(parsed.data.question_type)) {
@@ -88,6 +93,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       select: { id: true, questions: true, summary: true },
     });
     if (!latest) return notFound('분석 결과가 없습니다');
+    if (parsed.data.analysisId && parsed.data.analysisId !== latest.id) return badRequest('분석 결과가 변경되었습니다. 새로고침 후 다시 저장하세요');
 
     const questionsArr = Array.isArray(latest.questions)
       ? (latest.questions as unknown[])
@@ -103,6 +109,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     const current = questionsArr[idx] as Record<string, unknown>;
     const next: Record<string, unknown> = { ...current };
+    const review = { reviewed_at: new Date().toISOString(), reviewed_by: user.id };
+    if (isEnglish && (parsed.data.english_analysis || parsed.data.points !== undefined)) {
+      const evidence = parsed.data.english_analysis ?? readEnglishQuestionAnalysis(current.english_analysis);
+      const issue = validateEnglishSubquestionPoints(evidence.subquestions, parsed.data.points ?? current.points);
+      if (issue) return badRequest(issue);
+    }
+    if (parsed.data.english_analysis) {
+      const evidence = parsed.data.english_analysis;
+      next.english_analysis = evidence;
+      next.english_analysis_review = review;
+    }
+    if (parsed.data.difficulty !== undefined && isEnglish) next.difficulty_reviewed = review;
 
     if (parsed.data.confidence !== undefined) {
       next.confidence = parsed.data.confidence;

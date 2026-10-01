@@ -906,7 +906,7 @@ export function EnglishAnalysisDetail({ detail, analyzing, onAnalyze, onRefresh,
                   aria-label="시험 난이도 판단 기준 보기"
                 >
                   <div className="flex flex-col items-center gap-1.5">
-                    <span className="text-[10px] font-semibold text-slate-500">시험 난이도</span>
+                    <span className="text-[10px] font-semibold text-slate-500">시험 추정 난도</span>
                     {/* 연속축 수직선 — 정확한 가중평균 위치에 마커(이산 박스 대비 헤더 값과 정확히 일치) */}
                     <DifficultyNumberLine avg={avg} width={150} />
                   </div>
@@ -1230,6 +1230,7 @@ export function EnglishAnalysisDetail({ detail, analyzing, onAnalyze, onRefresh,
           {/* 탭 컨텐츠 */}
           {activeTab === 'basic' && (
             <EnglishAnalysisResultView
+              key={`${detail.id}:${latestAnalysis.id}`}
               questions={questions}
               summary={summary}
               totalPoints={totalPoints ?? null}
@@ -1237,10 +1238,12 @@ export function EnglishAnalysisDetail({ detail, analyzing, onAnalyze, onRefresh,
               examType={detail.examType}
               examPaperId={detail.id}
               analysisId={latestAnalysis?.id}
-              onDifficultyEdit={(qNum, difficulty, aiDifficulty) =>
-                setDiffEdits((prev) => ({ ...prev, [String(qNum)]: { difficulty, ai_difficulty: aiDifficulty } }))
-              }
+              onDifficultyEdit={(qNum, difficulty, aiDifficulty) => {
+                setDiffEdits((prev) => ({ ...prev, [String(qNum)]: { difficulty, ai_difficulty: aiDifficulty } }));
+                onRefresh();
+              }}
               grade={detail.grade}
+              onRefresh={onRefresh}
             />
           )}
           {activeTab === 'comments' && (
@@ -1248,9 +1251,10 @@ export function EnglishAnalysisDetail({ detail, analyzing, onAnalyze, onRefresh,
               questions={questions}
               examPaperId={detail.id}
               analysisId={latestAnalysis?.id}
-              onDifficultyEdit={(qNum, difficulty, aiDifficulty) =>
-                setDiffEdits((prev) => ({ ...prev, [String(qNum)]: { difficulty, ai_difficulty: aiDifficulty } }))
-              }
+              onDifficultyEdit={(qNum, difficulty, aiDifficulty) => {
+                setDiffEdits((prev) => ({ ...prev, [String(qNum)]: { difficulty, ai_difficulty: aiDifficulty } }));
+                onRefresh();
+              }}
             />
           )}
           {activeTab === 'strategy' && (

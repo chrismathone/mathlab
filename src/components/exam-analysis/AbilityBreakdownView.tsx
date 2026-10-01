@@ -17,7 +17,7 @@ import { QuestionEvidenceList } from './QuestionEvidenceList';
  * "계산 연습을 매일 하세요" 는 전국 어느 시험에서나 같은 문장이다.
  * 대신 이 시험에서만 나오는 사실(배점 쏠림, 안 나온 영역, 해당 문항)을 보여준다.
  */
-export function AbilityBreakdownView({ breakdown }: { breakdown: AbilityBreakdown }) {
+export function AbilityBreakdownView({ breakdown, partial = false }: { breakdown: AbilityBreakdown; partial?: boolean }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const dominant = dominantAbility(breakdown);
 
@@ -38,7 +38,7 @@ export function AbilityBreakdownView({ breakdown }: { breakdown: AbilityBreakdow
       {/* 요약은 계산해서 나온 사실만 — 쏠림이 없으면 아무 말도 하지 않는다 */}
       {dominant && (
         <p className="text-xs text-slate-600 leading-relaxed">
-          배점의 <strong className="font-semibold text-slate-800">{dominant.percent}%</strong>가{' '}
+          {partial ? '분류된 문항의 확인 배점 중 ' : '배점의 '}<strong className="font-semibold text-slate-800">{dominant.percent}%</strong>가{' '}
           <span className="font-semibold" style={{ color: dominant.color }}>{dominant.label}</span>
           에 몰려 있습니다.
         </p>
@@ -90,7 +90,7 @@ export function AbilityBreakdownView({ breakdown }: { breakdown: AbilityBreakdow
       {/* "안 나왔다" 도 정보다 — 다음 시험 대비에서 이 영역을 버릴지 판단할 근거가 된다 */}
       {breakdown.absent.length > 0 && (
         <p className="text-[11px] text-slate-400 pt-1">
-          이 시험에 나오지 않은 영역: {breakdown.absent.map((a) => a.label).join(' · ')}
+          {partial ? '분류된 문항에서 확인되지 않은 영역: ' : '이 시험에 나오지 않은 영역: '}{breakdown.absent.map((a) => a.label).join(' · ')}
         </p>
       )}
     </div>

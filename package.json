@@ -16,6 +16,7 @@
     "calibration:recompute": "tsx scripts/recompute-difficulty-calibration.ts",
     "verify:completeness": "tsx scripts/verify-completeness.ts",
     "verify:english": "tsx scripts/verify-english-taxonomy.ts",
+    "verify:en-evidence": "tsx scripts/parity/check-english-question-evidence.ts",
     "generate:english-textbooks": "tsx scripts/generate-english-textbooks.ts",
     "verify:cli-llm": "tsx scripts/verify-cli-llm.ts",
     "verify:template-blocks": "tsx scripts/parity/check-template-blocks.ts",

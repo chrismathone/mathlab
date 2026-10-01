@@ -79,7 +79,7 @@ const enPrompt = ExamPromptBuilder.build(enCtx).combined_prompt;
 assert(mathPrompt.includes('number | algebra | function | geometry | statistics'), '수학 H3 문자열 유지');
 assert(!mathPrompt.includes('grammar | vocabulary | reading | listening | writing | communication'), '수학 프롬프트에 영어 6유형 H3 없음');
 assert(enPrompt.includes('grammar | vocabulary | reading | listening | writing | communication'), '영어 H3 6유형');
-assert(enPrompt.includes('원칙적으로 듣기 문항이 없다'), '영어 내신 듣기 원칙');
+assert(enPrompt.includes('듣기 전용 문항이 명시된 경우'), '영어 듣기는 시험지 근거로 분류');
 assert(enPrompt.includes('호혜적'), '영어 코멘트 쉬운 말 규칙');
 assert(
   simplifyExamKorean('호혜적 교환의 함축 의미를 파악하는 독해입니다.') === '서로 주고받는 관계의 숨은 뜻을 파악하는 독해입니다.',

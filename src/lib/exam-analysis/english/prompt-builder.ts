@@ -24,10 +24,11 @@ import { formatEnglishAllowedTopicsPrompt, getEnglishAllowedTopicValues } from '
 import { describeEnglishExamScope } from '../english-textbooks';
 import { combinePrompts, getPaperTypeInstructions } from '../shared/prompt-frame';
 import type { ExamContext, BuildPromptResponse } from '../types';
+import { englishEvidencePrompt } from './question-evidence-prompt';
 
 /** H3~H4 — 영어 전용 하드 제약 (공통 프레임에 주입) */
 const HARD_CONSTRAINTS = `H3. 영어 유형(question_type)은 **정확히** 다음 6개 중 하나: grammar | vocabulary | reading | listening | writing | communication. 그 외 값 금지.
-   - 내신 지필고사에는 원칙적으로 듣기 문항이 없다. 대화문·회화는 communication 또는 reading.
+   - 대화문·회화 지문만으로 듣기로 분류하지 않는다. communication 또는 reading으로 분류한다.
    - listening은 시험지에 듣기 전용 문항이 명시된 경우에만.
 H4. 능력(ability_domain)은 **정확히** 다음 4개 중 하나: accuracy | understanding | reasoning | expression. 대문자, 한글, 기타 값 금지.`;
 
@@ -45,10 +46,10 @@ V14. key_vocab / key_structures 는 해당 문항에 실제로 나온 표현만�
  * (적대적 리뷰 1.3). 경계는 ENGLISH_DIFFICULTY_SYSTEM_4LEVEL 한 곳만 쓰도록 위임한다.
  */
 const DIFFICULTY_RULES = `────────────────────────────────────────────────
-📊 H11~H14. 난이도(difficulty) 기준 — 영어 내신 전용
+📊 H11~H14. 난이도(difficulty) 기준 — 영어 문항
 ────────────────────────────────────────────────
-H11. **5단계 경계는 위 "영어 난이도 5단계 시스템"의 정답률 기준을 그대로 따른다.**
-   그 표가 이 시험의 유일한 난이도 기준이다. 다른 과목의 경계(90%+ 등)를 끌어오지 말 것.
+H11. **5단계는 위 "영어 난이도 5단계 시스템"의 언어 능력·사고 요구를 기준으로 판단한다.**
+   실제 응답 자료가 없으므로 AI 추정 난도이며 정답률을 생성하지 않는다.
 
 H12. **난이도는 다음 6개 축으로 종합 판단** — 한 축만 보지 말 것:
    ① **어휘 수준**: 교과서 필수어 ↔ 문맥 추론이 필요한 다의어·관용구
@@ -58,11 +59,9 @@ H12. **난이도는 다음 6개 축으로 종합 판단** — 한 축만 보지 
    ⑤ **선지 함정**: 오답이 명백 ↔ 지문 일부만 맞는 매력적 오답
    ⑥ **친숙도**: 교과서에 나온 그대로 ↔ 처음 보는 소재·변형
 
-H13. **자연스러운 분포 강제** — 학교 내신 시험은 다음 분포가 일반적:
-   - 1단계: 5~15% / 2단계: 20~35% / 3단계: 25~40% / 4단계: 15~30% / 5단계: 0~10%
-   - ❌ **모든 문항을 3에 몰아넣지 말 것** — "확실하지 않으면 3"으로 분류는 금지
-   - ❌ **모든 문항을 같은 난이도로 출력하지 말 것** — 5종류 중 최소 3종류는 사용해야 함 (10문항 이상 시험지 기준)
-   - ✅ 서술형·빈칸 추론·순서 배열 등 변별 문항은 적극적으로 4를 부여
+H13. **분포를 강제하지 않는다.** 각 문항의 근거에 따라 독립적으로 판단한다.
+   - 난도를 모르면 null. 문항 수나 유형만으로 높은 난도를 부여하지 않는다.
+   - 특정 학교의 정답률·변별력·서술형 비중을 추정하지 않는다.
 
 H14. **문항 유형별 경향 (참고용)** — 강제 아니지만 의심 신호:
    - 단순 어법·어휘 문항이 4~5단계? → 의심 (보통 기본 확인)
@@ -71,7 +70,7 @@ H14. **문항 유형별 경향 (참고용)** — 강제 아니지만 의심 신�
      위 신호가 발생하면 추론 단계와 어휘·구문 수준을 다시 점검할 것`;
 
 /** V10~V11 — 영어 기준 자기검증 (번호 위치 대신 문항 유형으로 판단) */
-const DIFFICULTY_SELF_VERIFY = `V10. **난이도 분포 검증** — 10문항 이상이면 5단계 중 최소 3종류 사용? 모두 같은 난이도면 H13 위반.
+const DIFFICULTY_SELF_VERIFY = `V10. **난이도 근거 검증** — 분포를 맞추기 위해 난도를 바꾸지 않았는가? 실제 정답률을 지어내지 않았는가?
 V11. **난이도 유형 검증** — 어법·어휘 문항이 모두 4단계 이상? 또는 빈칸 추론·영작이 모두 1~2단계? H14 신호 점검 후 재평가했는가?`;
 
 export class EnglishExamPromptBuilder {
@@ -197,7 +196,7 @@ export class EnglishExamPromptBuilder {
 분석 결과는 반드시 지정된 JSON 형식으로만 출력하세요.
 
 **핵심 원칙:**
-1. 모든 문항을 빠짐없이 분석 (단, 하나의 문항 안의 소문항 (1)(2)는 분리하지 말고 통합!)
+1. 큰 문항은 빠짐없이 한 번씩 분석. 소문항 (1)(2)의 배점·조건은 english_analysis.subquestions에 보존하고 부모와 중복 집계하지 않는다.
 2. 난이도는 5단계 시스템("1"~"5")을 엄격히 적용
 3. topic 형식: "과목명 > 대단원 > 소단원" (공백 포함 > 구분)
 4. ai_comment: 정확히 2문장, 존댓말(~입니다/~합니다), 각 문장 20~40자
@@ -229,6 +228,7 @@ export class EnglishExamPromptBuilder {
     blocks.push({ name: 'ENGLISH_DIFFICULTY_SYSTEM_4LEVEL', text: ENGLISH_DIFFICULTY_SYSTEM_4LEVEL });
     blocks.push({ name: 'ENGLISH_TYPE_TAXONOMY', text: ENGLISH_TYPE_TAXONOMY });
     blocks.push({ name: 'ENGLISH_QUESTION_STRATEGIES_INLINE', text: ENGLISH_QUESTION_STRATEGIES_INLINE });
+    blocks.push({ name: 'ENGLISH_QUESTION_EVIDENCE', text: englishEvidencePrompt(context.exam_category) });
 
     // 학년별 토픽
     const topics = getEnglishTopicsForGrade(context.grade_level);
@@ -300,7 +300,7 @@ export class EnglishExamPromptBuilder {
     const q16Ability = 'reasoning';
     const qEssayType = 'writing';
     const qEssayAbility = 'expression';
-    const q1Comment = '기본 어법 규칙을 직접 확인하는 문제입니다. 교과서 문장을 정확히 암기하면 쉽게 풀 수 있습니다.';
+    const q1Comment = '기본 어법 규칙을 직접 확인하는 문제입니다. 주어와 동사의 형태를 함께 확인하는 연습이 필요합니다.';
     const q2Comment = '문맥에 맞는 어휘를 고르는 문제입니다. 주변 문장을 함께 보면 안정적으로 정답할 수 있습니다.';
     const q16Comment = '빈칸의 논리를 추론해야 하는 독해 문제입니다. 앞뒤 문장의 연결을 확인하는 것이 핵심입니다.';
     const qEssayComment = '조건에 맞는 문장을 영작하는 서술형입니다. 요구 문법 요소를 빠짐없이 써야 합니다.';
@@ -411,7 +411,7 @@ export class EnglishExamPromptBuilder {
       "question_number": "서술형1",
       "question_format": "essay",
       "difficulty": "3",
-      "difficulty_reason": "2개 개념 결합",
+      "difficulty_reason": "수일치와 어순 적용",
       "question_type": "${qEssayType}",
       "ability_domain": "${qEssayAbility}",
       "points": 8,
@@ -428,9 +428,10 @@ export class EnglishExamPromptBuilder {
 
 | 필드 | 규칙 |
 |------|------|
-| question_number | 시험지에 표기된 번호 (소문제: "1-1", "1-2" 등) |
+| question_number | 시험지에 표기된 큰 문항 번호. 소문항은 english_analysis.subquestions에 보존 |
+| english_analysis | 영어 문항별 근거 기록 구조를 따른다. source·subtype·skills·thinking·writing_conditions·subquestions·next_practice 포함 |
 | question_format | ${formatKeys} 중 하나 |
-| difficulty | ${difficultyKeys} 중 하나. **H11 절대 기준 + H12 6축 + H13 분포 강제 + H14 위치 휴리스틱 엄수**. 모든 문항을 "3"으로 몰지 말 것. |
+| difficulty | ${difficultyKeys} 중 하나 또는 판독 불가 시 null. **H11 언어 기준 + H12 6축 + H13 분포 강제 금지 + H14 유형 근거 점검**. 실제 정답률이 아닌 추정 난도. |
 | difficulty_reason | 난이도 이유, **최대 15자, 쉬운 말**. 예: "바꿔 말하기", "숨은 뜻", "조건 영작". 호혜적·함축·환언·스캔 품질 금지 |
 | question_type | ${typeFieldRule} |
 | ability_domain | ${abilityFieldRule} |

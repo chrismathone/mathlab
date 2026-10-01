@@ -13,6 +13,7 @@ export interface TypeRadarChartProps {
 }
 
 export interface AnalysisResultViewProps {
+  onRefresh?: () => void;
   questions: AnalyzedQuestion[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   summary: Record<string, any> | null;

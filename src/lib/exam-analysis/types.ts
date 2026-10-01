@@ -4,6 +4,7 @@
  */
 
 import type { ExamQuestionFormat, GradingStatus, AgentType } from './shared/constants';
+import type { EnglishQuestionAnalysis } from './english/question-evidence';
 
 // ── 문항 분석 결과 (기본 분석) ──
 /** 영어 학습 대책 — 시험지에 나온 단어 */
@@ -19,6 +20,9 @@ export interface EnglishKeyStructure {
 }
 
 export interface AnalyzedQuestion {
+  english_analysis?: EnglishQuestionAnalysis | null;
+  english_analysis_review?: { reviewed_at: string; reviewed_by: string };
+  difficulty_reviewed?: { reviewed_at: string; reviewed_by: string };
   id?: string;
   question_number: number | string;
   question_format: ExamQuestionFormat | null;

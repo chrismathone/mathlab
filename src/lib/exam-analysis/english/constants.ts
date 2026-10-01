@@ -12,7 +12,8 @@
 // en-v1.4.0: 난이도 기준 단일화 — 공용 프레임의 수학 기준(90%+·개념결합·식변형·번호위치)과
 //            DIFFICULTY_SYSTEM_FRAMEWORK 를 제거하고 영어 루브릭 하나만 남김.
 //            H12 평가 축을 어휘·구문·추론·지문량·선지함정·친숙도로 교체, H14 는 번호 대신 유형 기준.
-export const ENGLISH_PROMPT_VERSION = 'en-v1.4.0';
+// en-v1.5.0: 문항별 근거·소문항 보존, 내신/모의 문맥 분리, 추정 난도와 실측 분리.
+export const ENGLISH_PROMPT_VERSION = 'en-v1.5.0';
 
 // ── 영어 문항 유형 (내신 6유형) — 수학 TYPE_TO_STANDARD 와 분리 ──
 export const ENGLISH_QUESTION_TYPES = {
@@ -110,18 +111,18 @@ export const ENGLISH_TYPE_TAXONOMY = `📊 **영어 평가 유형 분류:**
 | grammar | 어법/문법 |
 | vocabulary | 어휘 |
 | reading | 독해 |
-| listening | 듣기 (내신 지필고사는 원칙적으로 없음. 듣기 전용 문항이 명시된 경우만) |
+| listening | 듣기 (시험지에 듣기 전용 문항이 명시된 경우) |
 | writing | 서술형/영작 |
 | communication | 의사소통 |
 
-**내신 분류 규칙:** 지필고사에는 원칙적으로 듣기 문항이 없다. 대화문·회화 지문은 communication 또는 reading. listening은 시험지에 듣기 전용 문항이 명시된 경우에만.`;
+**분류 규칙:** 대화문·회화 지문은 communication 또는 reading. listening은 시험지에 듣기 전용 문항이 명시된 경우에만. 내신·모의고사 모두 시험지의 실제 구성을 확인한다.`;
 
 export const ENGLISH_QUESTION_STRATEGIES_INLINE = `📝 **영어 문항 유형별 분석 전략:**
 
 - **어법(grammar)**: 밑줄 친 부분의 문법 요소 파악, 준동사/시제/수일치 등
 - **어휘(vocabulary)**: 문맥상 의미 파악, 동의어/반의어
 - **독해(reading)**: 주제, 요지, 제목, 빈칸, 순서, 삽입, 요약
-- **듣기(listening)**: 내신 지필고사는 원칙적으로 없음. 듣기 전용 문항이 명시된 경우만
+- **듣기(listening)**: 시험지에 듣기 전용 문항이 명시된 경우만
 - **서술형(writing)**: 문장 완성, 영작, 조건 영작
 - **의사소통(communication)**: 대화문·상황 표현 (듣기가 아님)`;
 
