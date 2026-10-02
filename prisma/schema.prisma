@@ -839,3 +839,262 @@ enum AnswerSpaceSize {
   XLARGE // ~120mm
 }
 
+// ============================================================
+// 🚧 수학 랩실 자동화 파이프라인 (Lab) — 상태 척추
+//   ⚠️ 격리 규칙: CLAUDE.md "최우선 하드 경계" 참조.
+//   - 모든 모델 Lab* 프리픽스 + @@map("lab_*") 로 기출분석 테이블과 물리 격리.
+//   - 5단계(진단→처방→공급→채점→보고)는 이 스키마에 대한 순수 함수.
+//   - 모든 산출물이 genMode(MANUAL|ASSISTED|AUTO)를 들고 단계별 사람↔자동 플립.
+//   - 데이터는 역방향으로 흐른다: Submission/GradedItem → MasteryRecord(진단)
+//     → Prescription(처방) → Worksheet(공급) → Submission ... (루프가 닫힘)
+// ============================================================
+
+enum LabTrack {
+  CURRENT // 현행
+  ADVANCED // 선행
+}
+
+enum LabGenMode {
+  MANUAL // 사람이 직접, 시스템은 기록만
+  ASSISTED // 사람 + AI 보조
+  AUTO // 완전 자동
+}
+
+enum LabProblemType {
+  MULTIPLE_CHOICE // 객관식
+  SHORT_ANSWER // 단답
+  DESCRIPTIVE // 서술형
+}
+
+enum LabErrorType {
+  NONE // 정답
+  CALCULATION // 계산 실수
+  CONCEPT // 개념 오류
+  INCOMPLETE // 풀이 미완
+  MISREAD // 문제 이해 오류
+  OTHER
+}
+
+enum LabWorksheetStatus {
+  PRESCRIBED // 처방됨 (아직 미생성)
+  SUPPLIED // HWP 생성 완료
+  SUBMITTED // 답안 제출됨
+  GRADED // 채점 완료
+}
+
+enum LabReportType {
+  PARENT
+  DIRECTOR
+}
+
+// ── 학생 ───────────────────────────────────────────
+model LabStudent {
+  id        String   @id @default(cuid())
+  name      String
+  grade     String? // 학년
+  createdAt DateTime @default(now())
+
+  pacing        LabPacingPosition?
+  mastery       LabMasteryRecord[]
+  prescriptions LabPrescription[]
+  worksheets    LabWorksheet[]
+  submissions   LabSubmission[]
+  reports       LabReport[]
+
+  @@map("lab_students")
+}
+
+// ── 교육과정 개념 그래프 (84개월 진도표 JSON에서 시드) ──
+model LabConcept {
+  id         String   @id // 진도표 conceptId 그대로 사용
+  name       String
+  track      LabTrack
+  monthIdx   Int // 진도표상 위치 (개월)
+  sessionIdx Int // 회차
+  domain     String? // 영역 (수와연산, 도형, 측정 ...)
+
+  // 선수개념 그래프 (BKT 전파 / 처방 게이팅에 사용)
+  prereqOf  LabConceptEdge[] @relation("labPrereq")
+  dependsOn LabConceptEdge[] @relation("labDependent")
+
+  mastery           LabMasteryRecord[]
+  problems          LabProblem[]
+  prescriptionItems LabPrescriptionItem[]
+
+  @@index([track, monthIdx, sessionIdx])
+  @@map("lab_concepts")
+}
+
+model LabConceptEdge {
+  id          String     @id @default(cuid())
+  prereqId    String // 선수 개념
+  dependentId String // 의존 개념
+  prereq      LabConcept @relation("labPrereq", fields: [prereqId], references: [id])
+  dependent   LabConcept @relation("labDependent", fields: [dependentId], references: [id])
+
+  @@unique([prereqId, dependentId])
+  @@map("lab_concept_edges")
+}
+
+// ── 진단 산출물: 학생 × 개념 숙련도 (masteryMap) ──────
+model LabMasteryRecord {
+  id               String     @id @default(cuid())
+  studentId        String
+  conceptId        String
+  student          LabStudent @relation(fields: [studentId], references: [id])
+  concept          LabConcept @relation(fields: [conceptId], references: [id])
+  score            Float // 0..1 숙련 확률 (BKT p(mastered))
+  observationCount Int        @default(0) // 관측 수 → confidence 대용
+  lastObservedAt   DateTime?
+  updatedAt        DateTime   @updatedAt
+  genMode          LabGenMode @default(MANUAL)
+
+  @@unique([studentId, conceptId])
+  @@index([conceptId, score]) // 원장 대시보드: "이 개념 약한 학생 N명"
+  @@map("lab_mastery_records")
+}
+
+model LabPacingPosition {
+  id         String     @id @default(cuid())
+  studentId  String     @unique
+  student    LabStudent @relation(fields: [studentId], references: [id])
+  track      LabTrack
+  monthIdx   Int
+  sessionIdx Int
+  updatedAt  DateTime   @updatedAt
+
+  @@map("lab_pacing_positions")
+}
+
+// ── 처방 산출물 ────────────────────────────────────
+model LabPrescription {
+  id        String     @id @default(cuid())
+  studentId String
+  student   LabStudent @relation(fields: [studentId], references: [id])
+  createdAt DateTime   @default(now())
+  genMode   LabGenMode @default(MANUAL)
+  rationale String? // 처방 근거 요약 (사람/AI)
+
+  items      LabPrescriptionItem[]
+  worksheets LabWorksheet[]
+
+  @@index([studentId, createdAt])
+  @@map("lab_prescriptions")
+}
+
+model LabPrescriptionItem {
+  id             String          @id @default(cuid())
+  prescriptionId String
+  conceptId      String
+  prescription   LabPrescription @relation(fields: [prescriptionId], references: [id])
+  concept        LabConcept      @relation(fields: [conceptId], references: [id])
+  difficulty     Int // 1..5
+  count          Int // 출제 문항 수
+  order          Int // 처방 내 순서
+  reason         String? // 이 개념을 처방한 이유 (약점 점수 등)
+
+  @@map("lab_prescription_items")
+}
+
+// ── 공급 reference data: 문제은행 ──────────────────
+model LabProblem {
+  id          String         @id @default(cuid())
+  conceptId   String
+  concept     LabConcept     @relation(fields: [conceptId], references: [id])
+  type        LabProblemType
+  difficulty  Int // 1..5
+  source      String? // 출처 / 생성 모델
+  isGenerated Boolean        @default(false) // AI 생성 여부
+  bodyRef     String // HWP/이미지/LaTeX 본문 참조 (스토리지 키)
+  answer      Json // 정답 (객관식 번호 / 단답 / 서술형 채점 루브릭)
+  createdAt   DateTime       @default(now())
+
+  worksheetProblems LabWorksheetProblem[]
+  gradedItems       LabGradedItem[]
+
+  @@index([conceptId, difficulty, type])
+  @@map("lab_problems")
+}
+
+// ── 공급 산출물: 학생에게 나간 시험지/워크시트 ──────
+model LabWorksheet {
+  id             String             @id @default(cuid())
+  studentId      String
+  prescriptionId String?
+  student        LabStudent         @relation(fields: [studentId], references: [id])
+  prescription   LabPrescription?   @relation(fields: [prescriptionId], references: [id])
+  status         LabWorksheetStatus @default(PRESCRIBED)
+  hwpUrl         String? // 생성된 HWP 스토리지 URL
+  genMode        LabGenMode         @default(MANUAL)
+  createdAt      DateTime           @default(now())
+
+  problems   LabWorksheetProblem[]
+  submission LabSubmission?
+
+  @@index([studentId, status])
+  @@map("lab_worksheets")
+}
+
+model LabWorksheetProblem {
+  id          String       @id @default(cuid())
+  worksheetId String
+  problemId   String
+  worksheet   LabWorksheet @relation(fields: [worksheetId], references: [id])
+  problem     LabProblem   @relation(fields: [problemId], references: [id])
+  order       Int
+
+  @@unique([worksheetId, problemId])
+  @@map("lab_worksheet_problems")
+}
+
+// ── 채점 산출물 ────────────────────────────────────
+model LabSubmission {
+  id          String       @id @default(cuid())
+  worksheetId String       @unique
+  studentId   String
+  worksheet   LabWorksheet @relation(fields: [worksheetId], references: [id])
+  student     LabStudent   @relation(fields: [studentId], references: [id])
+  answerRef   String? // 스캔/사진 답안 스토리지 키
+  gradedAt    DateTime?
+  genMode     LabGenMode   @default(MANUAL)
+  createdAt   DateTime     @default(now())
+
+  items LabGradedItem[]
+
+  @@index([studentId, gradedAt])
+  @@map("lab_submissions")
+}
+
+model LabGradedItem {
+  id           String        @id @default(cuid())
+  submissionId String
+  problemId    String
+  submission   LabSubmission @relation(fields: [submissionId], references: [id])
+  problem      LabProblem    @relation(fields: [problemId], references: [id])
+  correct      Boolean
+  partialScore Float? // 서술형 부분점수 0..1
+  errorType    LabErrorType  @default(NONE)
+  confidence   Float? // AI 채점 신뢰도 0..1 (낮으면 needsReview)
+  needsReview  Boolean       @default(false) // 사람 검수 큐로 보낼지
+
+  @@index([problemId])
+  @@map("lab_graded_items")
+}
+
+// ── 보고 산출물 ────────────────────────────────────
+model LabReport {
+  id          String        @id @default(cuid())
+  studentId   String
+  student     LabStudent    @relation(fields: [studentId], references: [id])
+  type        LabReportType
+  periodStart DateTime
+  periodEnd   DateTime
+  url         String? // 생성된 리포트(PDF/HWP) URL
+  summary     Json? // 핵심 지표 스냅샷
+  genMode     LabGenMode    @default(MANUAL)
+  createdAt   DateTime      @default(now())
+
+  @@index([studentId, type, createdAt])
+  @@map("lab_reports")
+}
+
