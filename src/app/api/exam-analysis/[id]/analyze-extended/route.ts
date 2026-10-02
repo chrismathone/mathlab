@@ -8,6 +8,8 @@ import { runExtendedAnalysis } from '@/lib/exam-analysis/agents/orchestrator';
 import type { AgentType } from '@/lib/exam-analysis/constants';
 import { assertPlanFeature } from '@/lib/billing/guard';
 import { assertDemoFeature } from '@/lib/demo/accounts';
+import { toExamSubjectKey } from '@/lib/exam-analysis/shared/subject';
+import { checkEnglishCommentaryReadiness } from '@/lib/exam-analysis/english/commentary/context';
 
 /**
  * 이 라우트는 AI 호출이 끝날 때까지 요청 안에서 기다린다 — 짧은 API 가 아니다.
@@ -58,6 +60,19 @@ export async function POST(request: NextRequest, { params }: Params) {
   });
   if (!latestAnalysis) return badRequest('기본 분석을 먼저 실행하세요');
 
+  // 영어 총평 — 서버 readiness 차단(누락·배점·단원·번호 중복·소문항 배점). 화면과 같은 함수.
+  // 출처 미확인·세부 근거 부족은 차단하지 않는다(구조 중심 보고서로 생성).
+  const englishCommentary = toExamSubjectKey(examPaper.subject) === 'ENGLISH' && agents.includes('commentary');
+  if (englishCommentary) {
+    const readiness = checkEnglishCommentaryReadiness({ examPaper, analysis: latestAnalysis });
+    if (!readiness.ready) {
+      return NextResponse.json(
+        { error: { code: 'COMMENTARY_NOT_READY', message: `총평을 만들기 전에 확인할 항목이 있습니다: ${readiness.reasons.join(' · ')}` } },
+        { status: 400 },
+      );
+    }
+  }
+
   try {
     const results = await runExtendedAnalysis({
       analysisId: latestAnalysis.id,
@@ -67,6 +82,16 @@ export async function POST(request: NextRequest, { params }: Params) {
       includeYearCompare,
       userId: user.id, // 각 extension의 lastRunBy 추적
     });
+
+    // 영어 총평: 진행 중(다른 요청이 lease 보유) → 409, 그 사이 준비 상태가 깨졌으면 400. 둘 다 AI 호출 없음.
+    // 그 외(생성 실패 포함)는 기존 배열 계약 그대로 — 클라이언트가 항목 status 를 본다.
+    const english = englishCommentary ? results.find((r) => r.agentType === 'commentary') : undefined;
+    if (english?.code === 'in_progress') {
+      return NextResponse.json({ error: { code: 'COMMENTARY_IN_PROGRESS', message: english.error ?? '이미 총평을 만드는 중입니다' } }, { status: 409 });
+    }
+    if (english?.code === 'not_ready') {
+      return NextResponse.json({ error: { code: 'COMMENTARY_NOT_READY', message: english.error ?? '총평을 만들기 전에 확인할 항목이 있습니다' } }, { status: 400 });
+    }
 
     return NextResponse.json({ data: results });
   } catch (error) {

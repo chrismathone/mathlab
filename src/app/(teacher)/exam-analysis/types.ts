@@ -32,7 +32,7 @@ export interface ExamPaperData {
     totalPoints: number | null;
     earnedPoints: number | null;
     analyzedAt: string | null;
-    extensions: Array<{ id: string; agentType: string; result?: Record<string, unknown>; createdAt: string; errorMessage: string | null }>;
+    extensions: Array<{ id: string; agentType: string; result?: Record<string, unknown>; createdAt: string; errorMessage: string | null; commentaryReady?: boolean }>;
   }>;
 }
 

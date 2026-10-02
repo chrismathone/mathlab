@@ -20,6 +20,7 @@ import { hasMinRole } from '@/lib/constants/navigation';
 import type { ExamPaperData } from './types';
 import { AnalysisDetail } from './AnalysisDetail';
 import { checkAnalysisReadiness } from '@/lib/exam-analysis/readiness';
+import { readCommentaryOutcome } from '@/lib/exam-analysis/shared/commentary-outcome';
 import { NarrowScreenGuard } from '@/components/ui/NarrowScreenGuard';
 import { MathSpinner } from '@/components/ui/MathSpinner';
 import { ProfileMenu } from '@/components/layout/ExamOnlyTopBar';
@@ -72,9 +73,11 @@ export default function ExamAnalysisPage() {
   const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const [selectedDetail, setSelectedDetail] = useState<ExamPaperData | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const { usage, demo, refetch: refetchSub } = useSubscription();
+  const { usage, demo, features, refetch: refetchSub } = useSubscription();
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   // 목록 패널 너비(px) — 경계 드래그로 조절. 기본 288(=w-72), 범위 220~560. localStorage 영속.
   const LIST_MIN_W = 220, LIST_MAX_W = 560, LIST_DEFAULT_W = 288;
@@ -179,12 +182,13 @@ export default function ExamAnalysisPage() {
 
   // 상세 조회 (cache:'no-store' — 분석 진행 중 stale 데이터 방지)
   const fetchDetail = useCallback(async (id: string) => {
+    if (selectedIdRef.current !== id) return;
     try {
       const res = await fetch(`/api/exam-analysis/${id}`, { cache: 'no-store' });
       const json = await res.json();
-      setSelectedDetail(json.data);
+      if (selectedIdRef.current === id) setSelectedDetail(json.data);
     } catch {
-      toast.error('상세 정보를 불러오지 못했습니다');
+      if (selectedIdRef.current === id) toast.error('상세 정보를 불러오지 못했습니다');
     }
   }, []);
 
@@ -196,8 +200,6 @@ export default function ExamAnalysisPage() {
   // 분석 중 자동 폴링 — ref로 함수 참조하여 interval 재생성 방지
   // selectedDetail.status도 확인 — 사이드바 items 갱신 전이라도 detail이 ANALYZING이면 polling 시작
   const hasAnalyzing = items.some(i => i.status === 'ANALYZING') || selectedDetail?.status === 'ANALYZING';
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
   const pollCountRef = useRef(0);
   const fetchListRef = useRef(fetchList);
   fetchListRef.current = fetchList;
@@ -305,8 +307,9 @@ export default function ExamAnalysisPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ agents: ['commentary'], forceRegenerate: true, includeNearby: true, includeYearCompare: true }),
           });
-          if (cRes.ok) toast.success('분석 + V3 총평 자동 생성 완료');
-          else toast.error('총평 자동 생성 실패 — 수동으로 생성하세요');
+          const outcome = readCommentaryOutcome(await cRes.json().catch(() => null));
+          if (cRes.ok && outcome.completed) toast.success('분석 + V3 총평 자동 생성 완료');
+          else toast.error(outcome.error);
         } catch {
           toast.error('총평 자동 생성 중 오류가 발생했습니다');
         } finally {
@@ -331,7 +334,7 @@ export default function ExamAnalysisPage() {
    * 학습 대책 탭을 먼저 눌러도 로딩만 보이도록 genState 로 진행 상태를 알린다
    * (탭이 스스로 또 호출하면 같은 AI 호출이 두 번 나가므로 반드시 이 신호로 막는다).
    */
-  const prepareEnglishStudy = useCallback(async (id: string) => {
+  const prepareEnglishStudy = useCallback(async (id: string, willChain: boolean) => {
     try {
       const res = await fetch(`/api/exam-analysis/${id}`, { cache: 'no-store' });
       if (!res.ok) return;
@@ -339,7 +342,7 @@ export default function ExamAnalysisPage() {
       const questions = json.data?.analyses?.[0]?.questions;
       if (!Array.isArray(questions) || questions.length === 0) return;
 
-      setGenState((p) => ({ ...p, [id]: { phase: 'englishStudy', startMs: Date.now(), willChain: false } }));
+      setGenState((p) => ({ ...p, [id]: { phase: 'englishStudy', startMs: Date.now(), willChain } }));
       try {
         const sRes = await fetch(`/api/exam-analysis/${id}/english-study`, buildStudyRequest());
         if (!sRes.ok) {
@@ -350,16 +353,33 @@ export default function ExamAnalysisPage() {
       } catch {
         toast.warning('학습 대책 준비 중 오류가 발생했습니다');
       } finally {
-        clearGen(id);
         fetchListRef.current(true);
         if (selectedIdRef.current === id) fetchDetailRef.current(id);
       }
+      // 총평은 학습 대책 팩에 의존하지 않는다. 같은 진행 상태를 쓰므로 단계만 직렬로 연결한다.
+      if (willChain) {
+        setGenState((p) => ({ ...p, [id]: { phase: 'commentary', startMs: Date.now(), willChain } }));
+        try {
+          const cRes = await fetch(`/api/exam-analysis/${id}/analyze-extended`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agents: ['commentary'], forceRegenerate: true }),
+          });
+          const outcome = readCommentaryOutcome(await cRes.json().catch(() => null));
+          if (cRes.ok && outcome.completed) toast.success('영어 총평이 생성되었습니다');
+          else toast.error(outcome.error);
+        } catch { toast.error('영어 총평 생성 중 오류가 발생했습니다'); }
+      }
     } catch {
+      toast.warning('영어 후속 준비를 마치지 못했습니다. 분석 화면에서 다시 시도해 주세요.');
+    } finally {
       clearGen(id);
+      fetchListRef.current(true);
+      if (selectedIdRef.current === id) fetchDetailRef.current(id);
     }
   }, [clearGen]);
 
   const handleAnalyze = async (id: string) => {
+    if (analyzing || genState[id]) return;
     // 데모 계정: 권한·잔여 횟수 사전 차단(서버 왕복 없이 즉시 안내). 그 외: 월 한도 사전 차단.
     if (demo && demo.isDemo) {
       if (!demo.perms.analyze) {
@@ -384,10 +404,10 @@ export default function ExamAnalysisPage() {
     ));
     // 체크박스 ON 이거나, 기존에 총평이 있던 분석본의 재분석이면 → 총평까지 자동 V3 재생성
     const isEnglish = target?.subject === 'ENGLISH';
-    const willChain = !isEnglish && (autoCommentary || hadCommentary);
+    const willChain = isEnglish ? autoCommentary && features.commentary : (autoCommentary || hadCommentary);
     toast.info(
       isEnglish
-        ? 'AI 분석 후 학습 대책 데이터를 이어서 준비합니다'
+        ? (willChain ? 'AI 분석 후 학습 대책과 영어 총평을 이어서 준비합니다' : 'AI 분석 후 학습 대책을 준비합니다. 기존 영어 총평은 이전 근거 표시와 함께 보존됩니다')
         : willChain
           ? (hadCommentary && !autoCommentary
               ? 'AI 재분석 후 기존 V3 총평을 자동 갱신합니다'
@@ -395,24 +415,23 @@ export default function ExamAnalysisPage() {
           : 'AI 분석이 시작되었습니다',
     );
     try {
-      // fire-and-forget: 서버에 분석 요청, 완료 시 갱신
-      fetch(`/api/exam-analysis/${id}/analyze`, buildAnalyzeRequest())
+      // 후속 단계가 끝날 때까지 실행 버튼을 잠그고 현재 선택된 시험만 갱신한다.
+      await fetch(`/api/exam-analysis/${id}/analyze`, buildAnalyzeRequest())
         .then(async (res) => {
           if (!res.ok) {
             const err = await res.json().catch(() => null);
             toast.error(err?.error?.message || (res.status === 403 ? '분석 한도를 초과했습니다 — 구독에서 업그레이드' : '분석 실패'));
             fetchList(true);
             refetchSub();
-            if (selectedId === id) fetchDetail(id);
+            if (selectedIdRef.current === id) fetchDetailRef.current(id);
             return;
           }
           // 분석 성공 → 즉시 목록/상세 갱신(결과 표시) 후 메타데이터 백그라운드 선생성
           // (readiness 통과 시. willChain이면 메타데이터 준비 후 총평까지 자동 생성)
           fetchList(true);
           refetchSub(); // 사용량 배지 즉시 갱신
-          if (selectedId === id) fetchDetail(id);
-          // 영어는 총평 체인 대신 학습 대책 추출을 뒤에서 돌린다.
-          if (isEnglish) await prepareEnglishStudy(id);
+          if (selectedIdRef.current === id) fetchDetailRef.current(id);
+          if (isEnglish) await prepareEnglishStudy(id, willChain);
           else await prepareMetadataAndMaybeCommentary(id, willChain);
         })
         .catch(() => {
@@ -627,6 +646,7 @@ export default function ExamAnalysisPage() {
           </div>
         ) : selectedDetail ? (
           <AnalysisDetail
+            key={selectedDetail.id}
             detail={selectedDetail}
             analyzing={analyzing}
             onAnalyze={handleAnalyze}

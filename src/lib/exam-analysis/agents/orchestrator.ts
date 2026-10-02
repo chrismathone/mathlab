@@ -13,6 +13,8 @@ import type { AgentInput } from './base-agent';
 import { findNearbyExamData } from '../nearby-school-data';
 import { formatDistribution, type FormatSourceQuestion } from '../shared/question-format';
 import { readExamStats, hasAnyExamStats } from '../shared/exam-stats';
+import { toExamSubjectKey } from '../shared/subject';
+import { toUserFacingError } from '../shared/error-message';
 
 // 에이전트 lazy import (순환 참조 방지)
 async function getAgent(agentType: AgentType) {
@@ -36,6 +38,8 @@ export interface OrchestratorResult {
   result: unknown;
   status: 'completed' | 'failed';
   error?: string;
+  /** 영어 총평 판정 코드 (completed·cached·in_progress·not_ready 등) — route 가 HTTP 상태로 옮긴다 */
+  code?: string;
 }
 
 /**
@@ -87,9 +91,14 @@ export async function runExtendedAnalysis(params: {
 
   const results: OrchestratorResult[] = [];
 
+  // 영어 총평은 독립 계약 경로(english/commentary)로 보낸다 — BaseAgent 폴백·metadata·주변 비교·v4 병합을 타지 않는다.
+  // 수학(또는 영어의 다른 에이전트)은 아래 기존 경로 그대로다.
+  const englishCommentary = toExamSubjectKey(subject) === 'ENGLISH' && agentTypes.includes('commentary');
+  const genericTypes = englishCommentary ? agentTypes.filter(t => t !== 'commentary') : agentTypes;
+
   // 순차 의존성 에이전트 분리
-  const sequentialRequested = agentTypes.filter(t => SEQUENTIAL_AGENTS.includes(t));
-  const independentRequested = agentTypes.filter(t => !SEQUENTIAL_AGENTS.includes(t));
+  const sequentialRequested = genericTypes.filter(t => SEQUENTIAL_AGENTS.includes(t));
+  const independentRequested = genericTypes.filter(t => !SEQUENTIAL_AGENTS.includes(t));
 
   // 중간 결과 저장 (순차 의존성용)
   let weaknessProfile: WeaknessProfile | undefined;
@@ -263,6 +272,20 @@ export async function runExtendedAnalysis(params: {
 
   const independentResults = await Promise.all(independentPromises);
   results.push(...independentResults);
+
+  if (englishCommentary) {
+    try {
+      const { runEnglishCommentary } = await import('../english/commentary/service');
+      results.push(await runEnglishCommentary({ analysisId, userId, forceRegenerate }));
+    } catch (e) {
+      // 저장소 예외 등 — 이전 성공 문서는 건드리지 않은 채 실패만 돌려준다
+      console.error('[orchestrator] 영어 총평 실행 실패:', e);
+      results.push({
+        agentType: 'commentary', result: null, status: 'failed', code: 'generation_failed',
+        error: toUserFacingError(e, '총평 생성 중 오류가 발생했습니다. 다시 시도해 주세요.'),
+      });
+    }
+  }
 
   return results;
 }

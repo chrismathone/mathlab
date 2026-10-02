@@ -9,6 +9,7 @@ import { assertDemoAnalysisLimit } from '@/lib/demo/accounts';
 import { consumeExamAnalysisCredit } from '@/lib/entitlements/service';
 import { analyzeExam } from '@/lib/exam-analysis/ai-engine';
 import { preserveEnglishQuestionReview } from '@/lib/exam-analysis/english/question-evidence';
+import { migrateEnglishCommentaryForReanalysis } from '@/lib/exam-analysis/english/commentary/migrate';
 import {
   getExamAnalysisModelVersion,
   getExamAnalysisTimeoutLabel,
@@ -200,6 +201,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   // 분석본을 지우면 확장도 함께 사라지므로, 교정값과 같은 방식으로 보존했다가 재적용한다.
   // 안 그러면 재분석에 **성공**할 때마다 사용자가 고른 템플릿이 말없이 기본값으로 돌아간다.
   let priorTemplate: unknown = null;
+  // 영어 총평 — 직전 유효 보고서를 새 분석으로 이관한다(재분석 Cascade 로 사라지지 않게).
+  // 옛 analysisId 기준 서명이라 새 분석에서는 '이전 근거' 배너가 뜬다. 구형·손상 문서는 옮기지 않는다.
+  let priorEnglishCommentary: { result: unknown; lastRunBy: string | null } | null = null;
   let snapshot: AnalysisSnapshot | null = null;
   if (examPaper.status === 'COMPLETED' || examPaper.status === 'FAILED') {
     const prevRows = await prisma.examAnalysis.findMany({
@@ -221,6 +225,11 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
     }
     priorTemplate = prev?.extensions.find((e) => e.agentType === 'template')?.result ?? null;
+    if (examPaper.subject === 'ENGLISH' && prev) {
+      const ext = prev.extensions.find((e) => e.agentType === 'commentary');
+      const migrated = ext ? migrateEnglishCommentaryForReanalysis(ext.result, prev.id) : null;
+      if (migrated) priorEnglishCommentary = { result: migrated, lastRunBy: ext?.lastRunBy ?? null };
+    }
     // 실패 시 되돌릴 원본 확보 (위 AnalysisSnapshot 주석 참고)
     if (prevRows.length > 0) {
       snapshot = {
@@ -433,6 +442,22 @@ export async function POST(request: NextRequest, { params }: Params) {
         });
       } catch (e) {
         console.error('[analyze] 총평 템플릿 복원 실패:', e);
+      }
+    }
+    if (priorEnglishCommentary) {
+      try {
+        await prisma.examAnalysisExtension.create({
+          data: {
+            analysisId: analysis.id,
+            agentType: 'commentary',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            result: priorEnglishCommentary.result as any,
+            lastRunBy: priorEnglishCommentary.lastRunBy,
+            lastRunAt: new Date(),
+          },
+        });
+      } catch (e) {
+        console.error('[analyze] 영어 총평 이관 실패:', e);
       }
     }
 

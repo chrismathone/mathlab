@@ -7,6 +7,7 @@ import type { BasicAnalysisResult, AnalyzedQuestion } from '@/lib/exam-analysis/
 import { COMMENTARY_V4_PROMPT_VERSION } from '@/lib/exam-analysis/constants';
 import { assertPlanFeature } from '@/lib/billing/guard';
 import { formatDistribution } from '@/lib/exam-analysis/shared/question-format';
+import { toExamSubjectKey } from '@/lib/exam-analysis/shared/subject';
 
 /**
  * 이 라우트는 AI 호출이 끝날 때까지 요청 안에서 기다린다 — 짧은 API 가 아니다.
@@ -43,6 +44,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     where: { id, ...tenantWhere },
   });
   if (!examPaper) return notFound('시험지를 찾을 수 없습니다');
+
+  // 영어 총평은 영어 전용 계약(english/commentary)으로만 만든다. 이 수학용 경로를 직접 호출해도
+  // 영어 commentary 행(또는 metadata)을 수학 모양으로 덮어쓰지 못하게 명시적으로 거부한다.
+  if (toExamSubjectKey(examPaper.subject) === 'ENGLISH') {
+    return NextResponse.json(
+      { error: { code: 'ENGLISH_NOT_SUPPORTED', message: '영어 시험지는 이 기능을 지원하지 않습니다. 총평 생성 버튼을 이용해 주세요' } },
+      { status: 400 },
+    );
+  }
 
   // AI 총평(V4)은 Pro+ 기능
   const featureGate = await assertPlanFeature(user.viewingTenantId ?? user.tenantId, 'commentary');

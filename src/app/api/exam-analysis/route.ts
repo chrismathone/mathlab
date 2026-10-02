@@ -5,6 +5,7 @@ import { getExamScope } from '@/lib/demo/accounts';
 import { examPaperCreateSchema, examPaperQuerySchema } from '@/lib/exam-analysis/schemas';
 import { matchSchoolByName } from '@/lib/utils/school-matcher';
 import { getExamAnalysisStuckMs } from '@/lib/exam-analysis/cli-llm';
+import { readEnglishCommentaryState } from '@/lib/exam-analysis/english/commentary/schema';
 
 /** GET /api/exam-analysis — 시험지 목록 조회 */
 export async function GET(request: NextRequest) {
@@ -58,6 +59,7 @@ export async function GET(request: NextRequest) {
               extensions: {
                 select: {
                   agentType: true,
+                  errorMessage: true,
                   lastRunBy: true,
                   lastRunAt: true,
                   lastRunByUser: { select: { id: true, name: true } },
@@ -73,8 +75,29 @@ export async function GET(request: NextRequest) {
       prisma.examPaper.count({ where }),
     ]);
 
+    // 학습 대책·분석글 등 다른 extension의 큰 JSON은 목록에서 읽지 않는다.
+    // 현재 페이지의 총평만 검증하고 응답에는 작은 판정값을 싣는다.
+    const analysisIds = items.flatMap(item => item.analyses.map(analysis => analysis.id));
+    const commentaries = analysisIds.length ? await prisma.examAnalysisExtension.findMany({
+      where: { analysisId: { in: analysisIds }, agentType: 'commentary' },
+      select: { analysisId: true, result: true },
+    }) : [];
+    const commentaryByAnalysis = new Map(commentaries.map(row => [row.analysisId, row.result]));
     return NextResponse.json({
-      data: items,
+      data: items.map(item => ({ ...item, analyses: item.analyses.map(analysis => ({
+        ...analysis,
+        extensions: analysis.extensions.map(({ errorMessage, ...extension }) => {
+          const result = extension.agentType === 'commentary' ? commentaryByAnalysis.get(analysis.id) : null;
+          const legacy = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
+          const english = item.subject === 'ENGLISH' ? readEnglishCommentaryState(result) : null;
+          return {
+            ...extension,
+            commentaryReady: extension.agentType === 'commentary' && !errorMessage &&
+              (english ? !!english.document && (!english.running || english.running.expired) :
+                typeof legacy.overall_comment === 'string' && legacy.overall_comment.trim().length > 0),
+          };
+        }),
+      })) })),
       meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {

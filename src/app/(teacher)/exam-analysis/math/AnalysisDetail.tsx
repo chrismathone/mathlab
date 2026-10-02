@@ -18,6 +18,7 @@ import type { CommentaryResult } from '@/lib/exam-analysis/agents/commentary-age
 import { DIFFICULTY_BAR_COLORS, isStalePromptVersion, extractPromptVersion, CURRENT_PROMPT_VERSION } from '@/lib/exam-analysis/constants';
 import { toUserFacingError } from '@/lib/exam-analysis/shared/error-message';
 import { checkAnalysisReadiness } from '@/lib/exam-analysis/readiness';
+import { readCommentaryOutcome } from '@/lib/exam-analysis/shared/commentary-outcome';
 import { koImg } from '@/lib/exam-analysis/section-blocks';
 import { getDemoNaverBlocks } from '@/lib/demo/naver-blocks';
 import { isDemoExamId } from '@/lib/demo/util';
@@ -364,6 +365,8 @@ export function MathAnalysisDetail({ detail, analyzing, onAnalyze, onRefresh, au
         return;
       }
       // 다른 시험지로 갔어도 완료 토스트는 표시 (생성이 멈추지 않았음을 알림).
+      const outcome = readCommentaryOutcome(await res.json().catch(() => null));
+      if (!outcome.completed) { toast.error(outcome.error); onRefresh(); return; }
       toast.success('총평이 생성되었습니다');
       // 현재 보고 있는 시험지면 즉시 갱신. 다른 시험지면 돌아올 때 page selection 효과가 자동 재조회.
       onRefresh();

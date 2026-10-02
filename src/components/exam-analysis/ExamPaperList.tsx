@@ -44,6 +44,8 @@ interface ExamPaperItem {
     analyzedByUser?: { id: string; name: string } | null;
     extensions?: Array<{
       agentType: string;
+      commentaryReady?: boolean;
+      errorMessage?: string | null;
       lastRunBy?: string | null;
       lastRunAt?: string | null;
       lastRunByUser?: { id: string; name: string } | null;
@@ -124,7 +126,7 @@ function getDetailedStatus(
   const exts = item.analyses[0]?.extensions || [];
   const agentTypes = exts.map(e => e.agentType);
   if (agentTypes.includes('blog-article')) return { label: '글작성 완료', color: 'bg-indigo-100 text-indigo-700 border-indigo-300' };
-  if (agentTypes.includes('commentary')) return { label: '총평완료', color: 'bg-indigo-50 text-indigo-600 border-indigo-200' };
+  if (exts.some(e => e.agentType === 'commentary' && e.commentaryReady === true && !e.errorMessage)) return { label: '총평완료', color: 'bg-indigo-50 text-indigo-600 border-indigo-200' };
   return { label: '분석완료', color: 'bg-emerald-50 text-emerald-600 border-emerald-200' };
 }
 
